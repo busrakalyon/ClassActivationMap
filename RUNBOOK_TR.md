@@ -55,6 +55,12 @@ Makalenin kaynağı MCG'dir: Pont-Tuset vd., *Multiscale Combinatorial Grouping*
 3. Resmî MCG kodu `https://github.com/jponttuset/mcg` ile yeniden üretim yapılabilir; fakat
    bu sonuç “özgün SOP” değil, “MCG-reconstruction” olarak ayrı raporlanmalıdır.
 
+Resmî MCG paketinin önceden eğitilmiş sürümü MATLAB ve bazı derlenmiş bileşenlere dayanır;
+yalnız `uv` ile kurulabilen saf Python çözümü değildir. Bu Ubuntu hesabında MATLAB/runtime
+yoksa SOP'yi yeniden üretmenin güvenilir yolu yazar artefaktını edinmektir. Yerel özgün
+`seg.py` içindeki UCM eşikleme/connected-components denemesi de makaledeki top-50 MCG
+üreticisinin uygulaması değildir.
+
 Mevcut `apply_sop.py`, yalnız doğrulanmış `[50,H,W]` NPZ önerilerini skorlar. Baidu
 paketinin biçimi görülmeden otomatik dönüştürücü yazılmamıştır.
 
