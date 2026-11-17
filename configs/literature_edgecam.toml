@@ -1,0 +1,52 @@
+# Transcribed literature reference only; never populated by evaluation code.
+[source]
+paper = "Exploring weakly-supervised image manipulation localization with tampering Edge-based class activation map"
+year = 2024
+pdf = "../../../EdgeCAM/Exploring weakly-supervised image manipulation localization with.pdf"
+
+[table3.casia_v1]
+auc = 0.836
+image_f1 = 0.806
+
+[table3.columbia]
+auc = 0.897
+image_f1 = 0.733
+
+[table3.coverage]
+auc = 0.729
+image_f1 = 0.343
+
+[table3.imd]
+auc = 0.642
+image_f1 = 0.613
+
+[table4.casia_v1]
+pixel_f1 = 0.338
+combined_f1 = 0.476
+
+[table4.columbia]
+pixel_f1 = 0.470
+combined_f1 = 0.573
+
+[table4.coverage]
+pixel_f1 = 0.262
+combined_f1 = 0.297
+
+[table4.imd]
+pixel_f1 = 0.242
+combined_f1 = 0.347
+
+[table4.nist16]
+pixel_f1 = 0.254
+
+[table5]
+max_pixel_f1 = 0.338
+max_iou = 0.245
+mean_pixel_f1 = 0.305
+mean_iou = 0.225
+
+[table8]
+edgecam_stage2_pixel_f1 = 0.338
+edgecam_stage2_iou = 0.245
+edgecam_stage7_pixel_f1 = 0.222
+edgecam_stage7_iou = 0.151

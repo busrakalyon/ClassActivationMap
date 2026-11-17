@@ -1,0 +1,76 @@
+[experiment]
+name = "experiment1_edgecam_baseline"
+seed = 42
+image_size = 512
+positive_class = 1
+class_names = ["real", "fake"]
+
+[model]
+architecture = "efficientnet_b0"
+# Reproduces the supplied reference code: ImageNet 1000-logit output -> 512 embedding.
+# The paper itself does not specify this intermediate 1000-logit design.
+feature_mode = "legacy_imagenet_logits"
+embedding_dim = 512
+dropout_before_embedding = 0.3
+dropout_after_embedding = 0.2
+arcface_scale = 50.0
+arcface_margin = 0.5
+arcface_easy_margin = false
+target_layer = "backbone.features.2"
+
+[training]
+epochs = 100
+batch_size = 16
+learning_rate = 1e-4
+weight_decay = 1e-4
+# Paper omits weight decay. Downloaded config says 1e-4 but train_mmengine.py does not
+# pass it to AdamW (therefore PyTorch's default is used). This value is an explicit choice.
+optimizer = "adamw"
+amp = true
+num_workers = 4
+checkpoint_every = 1
+validation_every = 1
+
+[scheduler]
+# The paper says LR is reduced periodically to 1e-8 but does not publish the milestones.
+# Cosine decay is a declared reconstruction assumption, not an author setting.
+kind = "cosine"
+minimum_learning_rate = 1e-8
+
+[data]
+validation_fraction = 0.10
+# This group-aware validation split is absent from the paper and is introduced to
+# prevent hyperparameter selection on CASIAv1/test sets.
+split_strategy = "connected_source_groups"
+fake_label = 1
+mask_foreground = "nonzero"
+
+[augmentation]
+horizontal_flip_probability = 0.5
+jpeg_probability = 0.5
+jpeg_quality_min = 50
+jpeg_quality_max = 100
+# Paper states blur augmentation but not its probability/kernel distribution.
+gaussian_blur_probability = 0.2
+gaussian_blur_kernel = 5
+
+[edgecam]
+formula = "paper"
+final_relu = true
+normalize = true
+epsilon = 1e-8
+classification_gate = 0.5
+epoch_fusion = "max"
+
+[sop]
+provider = "precomputed_npz"
+required_proposals = 50
+# Structuring element details are not specified in the paper; this is an explicit assumption.
+kernel_size = 3
+iterations = 1
+
+[evaluation]
+image_threshold = 0.5
+pixel_threshold = 0.5
+mask_positive_value = 1
+

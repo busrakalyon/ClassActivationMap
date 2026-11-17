@@ -1,0 +1,10 @@
+[paths]
+casia2_root = "/srv/datasets/casia/CASIA2"
+casia2_masks = "/srv/datasets/casia/CASIA2_Groundtruth"
+casia1_root = "/srv/datasets/casia/CASIA1"
+casia1_masks = "/srv/datasets/casia/CASIA1_Groundtruth"
+manifest_dir = "manifests"
+checkpoint_dir = "/srv/checkpoints/edge_finer/experiment1"
+sop_dir = "/srv/datasets/edgecam_sop"
+results_dir = "/srv/results/edge_finer/experiment1"
+
