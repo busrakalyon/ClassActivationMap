@@ -13,6 +13,11 @@
 bildirir. Yazarların dosya listesi yayımlanmadığından tam aynı split doğrulanamaz. Kullanılan
 ZIP'in SHA-256'sı ve manifest sayıları rapora yazılmalıdır.
 
+MVSS-Net ayrıca bazı CASIAv1 gerçek görüntülerinin CASIAv2 içinde de bulunduğunu belgeler.
+EdgeCAM literatür karşılaştırması için özgün CASIAv1 sonucu aynen tutulmalı; sızıntısız
+ikincil analizde CASIAv1plus veya SHA-256 ile CASIAv2 çakışmaları çıkarılmış CASIAv1 ayrı
+satırda raporlanmalıdır. Bu iki protokolün sonuçları birbirinin yerine kullanılmamalıdır.
+
 Ubuntu'da, proje dışında:
 
 ```bash
