@@ -14,6 +14,7 @@ from edge_finer_research.cams.epoch_fusion import fuse_epoch_cams
 from edge_finer_research.evaluation.metrics import image_metrics, pixel_metrics
 from edge_finer_research.models.checkpoints import load_checkpoint, save_checkpoint_atomic
 from edge_finer_research.models.efficientnet_arcface import EfficientNetArcFace
+from edge_finer_research.testing import run_deterministic_cam_control
 
 
 def synthetic_batch(image_size: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
@@ -85,6 +86,7 @@ def main() -> None:
     maps_by_sample: list[list[np.ndarray]] = [[] for _ in range(len(images))]
     valid_by_sample: list[list[bool]] = [[] for _ in range(len(images))]
     final_logits: torch.Tensor | None = None
+    raw_nonzero_cam_count = 0
     for checkpoint in checkpoints:
         restored = build_model().to(device)
         restored.load_state_dict(load_checkpoint(checkpoint, map_location=device)["model_state"], strict=True)
@@ -95,6 +97,7 @@ def main() -> None:
         probabilities = result.logits.softmax(dim=1)[:, 1]
         if not torch.isfinite(result.maps).all():
             raise AssertionError("EdgeCAM produced non-finite values")
+        raw_nonzero_cam_count += int(torch.count_nonzero(result.maps).item() > 0)
         for index in range(len(images)):
             maps_by_sample[index].append(result.maps[index].cpu().numpy())
             valid_by_sample[index].append(bool(probabilities[index].item() >= 0.5))
@@ -117,6 +120,7 @@ def main() -> None:
     scores = final_logits.softmax(dim=1)[:, 1].detach().cpu().numpy()
     predicted = final_logits.argmax(dim=1).detach().cpu().numpy()
     measured_image = image_metrics(labels.cpu().numpy(), predicted, scores)
+    deterministic_control = run_deterministic_cam_control(device)
     report = {
         "status": "passed",
         "device": str(device),
@@ -127,9 +131,11 @@ def main() -> None:
         "checkpoints": [path.name for path in checkpoints],
         "checkpoint_reload": True,
         "edgecam_finite": True,
+        "raw_nonzero_cam_batches": raw_nonzero_cam_count,
         "image_f1": measured_image.paper_f1,
         "auc": measured_image.auc,
         "pixel_results": pixel_results,
+        "deterministic_cam_control": deterministic_control,
         "note": "Synthetic smoke metrics are pipeline diagnostics, not research results.",
     }
     (output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -100,6 +100,7 @@ NumPy–PyTorch parite ve ArcFace testlerini özellikle çalıştırmak için:
 ```bash
 uv run python -m unittest tests.test_edgecam_math.EdgeCAMTorchParityTests -v
 uv run python -m unittest tests.test_arcface.ArcFaceTests -v
+uv run python -m unittest tests.test_deterministic_cam_pipeline.DeterministicCAMPipelineTests -v
 ```
 
 ## 4. Uçtan uca smoke test
@@ -112,8 +113,10 @@ uv run python scripts/ubuntu_sync.py --then smoke --device cuda
 ```
 
 Çıktı `results/smoke/<UTC-zaman>/report.json` altındadır ve Git pull ile silinmez. Sentetik
-metrikler bilimsel sonuç değildir. Tam eğitime ancak `status=passed`, iki checkpoint ve
-`edgecam_finite=true` görüldükten sonra geçin.
+metrikler bilimsel sonuç değildir. Tam eğitime ancak `status=passed`, iki checkpoint,
+`edgecam_finite=true` ve deterministik kontroldeki üç boolean alan `true` olduktan sonra
+geçin. EfficientNet kolunda `valid_epochs=0` olması mümkündür; deterministik kontrol bunun
+yerine CAM/fusion mekanizmasını zorunlu olarak sınar.
 
 ## 5. Manifest, eğitim ve değerlendirme
 
@@ -145,8 +148,8 @@ uv run python scripts/train_edgecam_classifier.py \
   --output-dir /data/edgecam/checkpoints/experiment1 --device cuda
 ```
 
-CAM üretimi, validation eşiği, CASIAv1 testi ve SOP komutları ana `README.md` içindedir.
-Piksel eşiği CASIAv2 validation'da seçilmeli; CASIAv1'de değiştirilmemelidir.
+CAM üretimi, validation eşiği ve değerlendirme CLI'larının ayrıntıları `--help` çıktılarında
+bulunur. Piksel eşiği CASIAv2 validation'da seçilmeli; CASIAv1'de değiştirilmemelidir.
 
 ## 6. Protokol farkları
 
