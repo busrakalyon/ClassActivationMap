@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,33 @@ class StreamingMaxState:
     logits: NDArray[np.float32]
     predicted_class: int
     fake_score: float
+
+
+def discover_epoch_checkpoints(
+    directory: str | Path, *, expected_epochs: int
+) -> list[Path]:
+    """Return only strict ``epoch_<integer>.pt`` files in verified numerical order."""
+    root = Path(directory)
+    if expected_epochs < 1:
+        raise ValueError("expected_epochs must be positive")
+    by_epoch: dict[int, Path] = {}
+    for path in root.iterdir():
+        match = re.fullmatch(r"epoch_(\d+)\.pt", path.name)
+        if not match or not path.is_file():
+            continue
+        epoch = int(match.group(1))
+        if epoch in by_epoch:
+            raise RuntimeError(f"Duplicate epoch number {epoch}: {by_epoch[epoch]} and {path}")
+        by_epoch[epoch] = path.resolve()
+    expected = list(range(1, expected_epochs + 1))
+    actual = sorted(by_epoch)
+    if actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        raise RuntimeError(
+            f"Epoch checkpoint sequence mismatch; missing={missing}, extra={extra}"
+        )
+    return [by_epoch[epoch] for epoch in expected]
 
 
 def initial_streaming_state(shape: tuple[int, int], *, num_classes: int = 2) -> StreamingMaxState:

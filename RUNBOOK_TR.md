@@ -204,19 +204,21 @@ python -m unittest tests.test_arcface.ArcFaceTests -v
 python -m unittest tests.test_edgecam_diagnostics -v
 ```
 
-Beklenen toplam test sayısı güncel commit için 44'tür. Windows'taki PyTorch'suz geliştirme
-ortamında 36 test geçer ve 8 PyTorch testi atlanır; Ubuntu ortamında atlama olmamalıdır.
+Beklenen toplam test sayısı güncel commit için 48'dir. Windows'taki PyTorch'suz geliştirme
+ortamında 39 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
 
 İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
 
 ```bash
+PILOT_ARCHIVE="$(ls -dt ~/edgecam_archive/preliminary_* | head -n 1)"
+
 python scripts/diagnose_edgecam.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_ARCHIVE/configs/experiment1_pilot.toml" \
+  --manifest "$PILOT_ARCHIVE/manifests/casia_v2_pilot.csv" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
   --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
-  --checkpoint-dir results/pilot/training/checkpoints \
-  --output-root results/pilot/diagnostics \
+  --checkpoint-dir "$PILOT_ARCHIVE/pilot/training/checkpoints" \
+  --output-root "$PILOT_ARCHIVE/diagnostics/edgecam_math" \
   --split val --device cuda --batch-size 4 --limit 8 \
   --batch-consistency-count 8
 ```
@@ -225,17 +227,17 @@ Alt küme tamamlandıktan sonra 128 pilot validation görüntüsünün tamamı:
 
 ```bash
 python scripts/diagnose_edgecam.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_ARCHIVE/configs/experiment1_pilot.toml" \
+  --manifest "$PILOT_ARCHIVE/manifests/casia_v2_pilot.csv" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
   --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
-  --checkpoint-dir results/pilot/training/checkpoints \
-  --output-root results/pilot/diagnostics \
+  --checkpoint-dir "$PILOT_ARCHIVE/pilot/training/checkpoints" \
+  --output-root "$PILOT_ARCHIVE/diagnostics/edgecam_math" \
   --split val --device cuda --batch-size 4 \
   --batch-consistency-count 8
 ```
 
-Her çalıştırma `results/pilot/diagnostics/<UTC-zaman>/` altında yeni bir dizin açar; var olan
+Her çalıştırma `$PILOT_ARCHIVE/diagnostics/edgecam_math/<UTC-zaman>/` altında yeni bir dizin açar; var olan
 çıktının üzerine yazmaz. `--keep-epoch-maps` verilmedikçe ara NPZ önbelleği raporlar üretildikten
 sonra kaldırılır. Varsayılan sınır bantları 3×3 dilation/erosion ile 1, 2 ve 3 iterasyondur.
 Varsayılan eşik grid'i `0.001`–`0.5` aralığındaki genişletilmiş diagnostik listedir. Bunlar yalnız
@@ -259,15 +261,16 @@ kararları kaydedilir. Aynı görüntünün üç ayrı batch-1 çalıştırması
 cd ~/Desktop/ClassActivationMap
 git pull --ff-only
 source .venv/bin/activate
+PILOT_ARCHIVE="$(ls -dt ~/edgecam_archive/preliminary_* | head -n 1)"
 
 python -m unittest discover -s tests -v
 
 python scripts/diagnose_batch_consistency.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_ARCHIVE/configs/experiment1_pilot.toml" \
+  --manifest "$PILOT_ARCHIVE/manifests/casia_v2_pilot.csv" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/pilot/training/checkpoints/epoch_003.pt \
-  --output-root results/pilot/batch_diagnostics \
+  --checkpoint "$PILOT_ARCHIVE/pilot/training/checkpoints/epoch_003.pt" \
+  --output-root "$PILOT_ARCHIVE/diagnostics/batch_consistency" \
   --split val --samples 4 --repeat-count 3 \
   --thresholds 0.05 0.5
 ```
@@ -276,11 +279,11 @@ CPU float64 referansı daha yavaştır. Gerçek batch 1/4 karşılaştırması i
 
 ```bash
 python scripts/diagnose_batch_consistency.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_ARCHIVE/configs/experiment1_pilot.toml" \
+  --manifest "$PILOT_ARCHIVE/manifests/casia_v2_pilot.csv" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/pilot/training/checkpoints/epoch_003.pt \
-  --output-root results/pilot/batch_diagnostics \
+  --checkpoint "$PILOT_ARCHIVE/pilot/training/checkpoints/epoch_003.pt" \
+  --output-root "$PILOT_ARCHIVE/diagnostics/batch_consistency" \
   --split val --samples 4 --repeat-count 3 \
   --thresholds 0.05 0.5 --include-cpu-float64
 ```
@@ -298,27 +301,26 @@ python scripts/generate_edgecam.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v2.csv \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/experiment1_full_RUN/checkpoints/epoch_100.pt \
-  --output-dir results/experiment1_full_RUN/cams/casia_v2_val \
+  --checkpoint results/01_shared_training/checkpoints/epoch_100.pt \
+  --output-dir results/02_edgecam/casia_v2_val/materialized_epoch_100 \
   --split val --device cuda --batch-size 1
 ```
 
 ### Sıfırdan 100 epoch eğitim
 
 Komut resume içermez. `build_model(config)` ImageNet başlangıç ağırlıklarını yükler; pilot
-checkpoint kullanılmaz. Çıktı dizini her çalıştırmada benzersiz olmalıdır:
+checkpoint kullanılmaz. Devam eden eğitime müdahale etmeyin veya bu komutu ikinci kez
+başlatmayın. Yalnız gelecekteki temiz bir başlangıç için kayıtlı komut:
 
 ```bash
 cd ~/Desktop/ClassActivationMap
 source .venv/bin/activate
-FULL_RUN="results/experiment1_full_$(date -u +%Y%m%dT%H%M%SZ)"
-
 python scripts/train_edgecam_classifier.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v2.csv \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
   --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
-  --output-dir "$FULL_RUN" --device cuda
+  --output-dir results/01_shared_training --device cuda
 ```
 
 Her epoch terminalde tek satır JSON olarak yazılır. Aynı değerler `training_metrics.csv` ve
@@ -330,8 +332,8 @@ silinmez. Aynı çıktı dizininde önceden eğitim metriği varsa kod üzerine 
 Checkpoint ve CAM alanını gerçek dosyalardan hesaplamak için:
 
 ```bash
-du -ch results/pilot/training/checkpoints/epoch_*.pt
-python -c "from pathlib import Path; p=list(Path('results/pilot/training/checkpoints').glob('epoch_*.pt')); a=sum(x.stat().st_size for x in p)/len(p); print('100 checkpoint GiB:', a*100/2**30)"
+du -ch results/01_shared_training/checkpoints/epoch_*.pt
+python -c "from pathlib import Path; p=list(Path('results/01_shared_training/checkpoints').glob('epoch_*.pt')); a=sum(x.stat().st_size for x in p)/len(p); print('100 checkpoint GiB:', a*100/2**30)"
 python -c "print('CASIAv1 100x512x512 float32 GiB:', 1720*100*512*512*4/2**30); print('CASIAv2 val GiB:', 901*100*512*512*4/2**30)"
 ```
 
@@ -350,54 +352,65 @@ sayısı ve en son checkpoint sınıflandırma çıktısı atomik bir durum NPZ'
 mevcut araçlarla uyumlu `sample.npy`, `sample__pre_sop.npy`, `sample.json` ve
 `image_predictions.csv` üretilir. SOP ve threshold araçlarının girdi sözleşmesi değişmez.
 
-### Üç pilot checkpoint ile materyalize/streaming eşdeğerlik testi
+Bilimsel CAM profili iki üretim yolunda da kod tarafından zorunlu uygulanır ve doğrulanır:
+batch size 1, float32, AMP kapalı, CUDA matmul TF32 kapalı, cuDNN TF32 kapalı ve model eval.
+Gerçek backend değerleri her çalışmanın metadata dosyasına yazılır. Batch size 1 dışında bir
+değer verilirse çalışma başlamadan reddedilir.
 
-Aynı CAM'leri karşılaştırabilmek için iki tarafta da aynı `--batch-size 4` kullanılmalıdır.
-Bu komutlar mevcut pilot CAM'lerini silmez; ayrı bir doğrulama dizini açar:
+Checkpoint dizininde yalnız tam olarak `epoch_<integer>.pt` biçimindeki dosyalar kabul edilir.
+Epoch'lar config'teki `training.epochs` ile karşılaştırılarak 1'den son epoch'a kadar eksiksiz ve
+sayısal sırada doğrulanır. `best_validation_f1.pt` hiçbir zaman ek epoch olarak seçilmez.
+
+### Arşivdeki üç pilot checkpoint ile materyalize/streaming eşdeğerlik testi
+
+İki yol aynı bilimsel backend profilini ve batch size 1'i kullanır. Config, manifest, checkpoint ve
+yeni test sonuçları `~/edgecam_archive/preliminary_*` altında kalır; bilimsel `results/` dizinine
+diagnostik çıktı yazılmaz:
 
 ```bash
 cd ~/Desktop/ClassActivationMap
 source .venv/bin/activate
-EQ_ROOT="results/pilot/streaming_equivalence_$(date -u +%Y%m%dT%H%M%SZ)"
+PILOT_ARCHIVE="$(ls -dt ~/edgecam_archive/preliminary_* | head -n 1)"
+PILOT_CONFIG="$PILOT_ARCHIVE/configs/experiment1_pilot.toml"
+PILOT_MANIFEST="$PILOT_ARCHIVE/manifests/casia_v2_pilot.csv"
+PILOT_CHECKPOINTS="$PILOT_ARCHIVE/pilot/training/checkpoints"
+EQ_ROOT="$PILOT_ARCHIVE/equivalence_tests/streaming_$(date -u +%Y%m%dT%H%M%SZ)"
 
 python scripts/generate_edgecam.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_CONFIG" --manifest "$PILOT_MANIFEST" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/pilot/training/checkpoints/epoch_001.pt \
-  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 4
+  --checkpoint "$PILOT_CHECKPOINTS/epoch_001.pt" \
+  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 1
 
 python scripts/generate_edgecam.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_CONFIG" --manifest "$PILOT_MANIFEST" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/pilot/training/checkpoints/epoch_002.pt \
-  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 4
+  --checkpoint "$PILOT_CHECKPOINTS/epoch_002.pt" \
+  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 1
 
 python scripts/generate_edgecam.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_CONFIG" --manifest "$PILOT_MANIFEST" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint results/pilot/training/checkpoints/epoch_003.pt \
-  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 4
+  --checkpoint "$PILOT_CHECKPOINTS/epoch_003.pt" \
+  --output-dir "$EQ_ROOT/materialized_cams" --split val --device cuda --batch-size 1
 
 python scripts/fuse_epoch_cams.py \
-  --manifest manifests/casia_v2_pilot.csv \
+  --manifest "$PILOT_MANIFEST" \
   --cam-dir "$EQ_ROOT/materialized_cams/epoch_001" \
   --cam-dir "$EQ_ROOT/materialized_cams/epoch_002" \
   --cam-dir "$EQ_ROOT/materialized_cams/epoch_003" \
   --output-dir "$EQ_ROOT/materialized_fused" --split val --method max --threshold 0.5
 
 python scripts/stream_edgecam_fusion.py \
-  --config configs/experiment1_pilot.toml \
-  --manifest manifests/casia_v2_pilot.csv \
+  --config "$PILOT_CONFIG" --manifest "$PILOT_MANIFEST" \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint-dir results/pilot/training/checkpoints \
+  --checkpoint-dir "$PILOT_CHECKPOINTS" \
   --output-dir "$EQ_ROOT/streaming_fused" \
-  --split val --device cuda --batch-size 4 --threshold 0.5
+  --metadata-output "$EQ_ROOT/metadata/streaming_run.json" \
+  --split val --device cuda --batch-size 1 --threshold 0.5
 
 python scripts/compare_fused_outputs.py \
-  --manifest manifests/casia_v2_pilot.csv \
+  --manifest "$PILOT_MANIFEST" \
   --reference-dir "$EQ_ROOT/materialized_fused" \
   --candidate-dir "$EQ_ROOT/streaming_fused" \
   --output "$EQ_ROOT/comparison.json" --split val --atol 0 --rtol 0
@@ -406,6 +419,8 @@ diff "$EQ_ROOT/materialized_cams/epoch_003/image_predictions.csv" \
   "$EQ_ROOT/streaming_fused/image_predictions.csv"
 ```
 
+Her materyalize checkpoint dizinindeki `cam_run_metadata.json` ile streaming
+`metadata/streaming_run.json` dosyaları aynı profilin gerçekten uygulandığını göstermelidir.
 `comparison.json` için beklenen sonuç `status=passed`, maksimum fark `0.0` ve bütün
 `valid_epochs` değerlerinin eşit olmasıdır. Fark çıkarsa önce iki yolun batch size ve backend
 ayarlarının aynı olduğu doğrulanmalıdır; tolerans yükseltilmemelidir.
@@ -419,15 +434,16 @@ python scripts/stream_edgecam_fusion.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v2.csv \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint-dir "$FULL_RUN/checkpoints" \
-  --output-dir "$FULL_RUN/streaming/casia_v2_val" \
+  --checkpoint-dir results/01_shared_training/checkpoints \
+  --output-dir results/02_edgecam/casia_v2_val \
+  --metadata-output results/00_metadata/edgecam_casia_v2_val.json \
   --split val --device cuda --batch-size 1 --threshold 0.5
 
 python scripts/select_pixel_threshold.py \
   --manifest manifests/casia_v2.csv \
   --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
-  --fused-cam-dir "$FULL_RUN/streaming/casia_v2_val" \
-  --output "$FULL_RUN/streaming/validation_threshold.json" --split val \
+  --fused-cam-dir results/02_edgecam/casia_v2_val \
+  --output results/00_metadata/edgecam_validation_threshold.json --split val \
   --candidates 0.001 0.0025 0.005 0.01 0.015 0.02 0.025 0.03 0.04 0.05 0.075 0.1 0.2 0.3 0.4 0.5
 ```
 
@@ -441,16 +457,17 @@ python scripts/stream_edgecam_fusion.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v1.csv \
   --image-root ~/edgecam_data/datasets/CASIA1_ready \
-  --checkpoint-dir "$FULL_RUN/checkpoints" \
-  --output-dir "$FULL_RUN/streaming/casia_v1_test" \
+  --checkpoint-dir results/01_shared_training/checkpoints \
+  --output-dir results/02_edgecam/casia_v1_test \
+  --metadata-output results/00_metadata/edgecam_casia_v1_test.json \
   --split test --device cuda --batch-size 1 --threshold "$VALIDATION_THRESHOLD"
 
 python scripts/evaluate.py \
   --manifest manifests/casia_v1.csv \
   --mask-root ~/edgecam_data/datasets/CASIA1_groundtruth/CASIA\ 1.0\ groundtruth \
-  --prediction-dir "$FULL_RUN/streaming/casia_v1_test" \
-  --image-predictions "$FULL_RUN/streaming/casia_v1_test/image_predictions.csv" \
-  --output-dir "$FULL_RUN/evaluation/casia_v1_pre_sop" \
+  --prediction-dir results/02_edgecam/casia_v1_test \
+  --image-predictions results/02_edgecam/casia_v1_test/image_predictions.csv \
+  --output-dir results/02_edgecam/casia_v1_test/evaluation_pre_sop \
   --split test --prediction-suffix __pre_sop.npy --pixel-scope fake
 ```
 
@@ -459,9 +476,9 @@ SOP artefaktı mevcutsa aynı fused dizin doğrudan kullanılabilir:
 ```bash
 python scripts/apply_sop.py \
   --manifest manifests/casia_v1.csv \
-  --fused-cam-dir "$FULL_RUN/streaming/casia_v1_test" \
+  --fused-cam-dir results/02_edgecam/casia_v1_test \
   --proposal-dir SOP_ARTEFAKT_DIZINI \
-  --output-dir "$FULL_RUN/sop/casia_v1_test" --split test
+  --output-dir results/02_edgecam/casia_v1_test/sop --split test
 ```
 
 ### Güvenli devam
@@ -473,8 +490,9 @@ python scripts/stream_edgecam_fusion.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v2.csv \
   --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
-  --checkpoint-dir "$FULL_RUN/checkpoints" \
-  --output-dir "$FULL_RUN/streaming/casia_v2_val" \
+  --checkpoint-dir results/01_shared_training/checkpoints \
+  --output-dir results/02_edgecam/casia_v2_val \
+  --metadata-output results/00_metadata/edgecam_casia_v2_val.json \
   --split val --device cuda --batch-size 1 --threshold 0.5 --resume
 ```
 

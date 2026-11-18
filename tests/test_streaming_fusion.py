@@ -8,6 +8,7 @@ import numpy as np
 
 from edge_finer_research.cams.epoch_fusion import fuse_epoch_cams
 from edge_finer_research.cams.streaming_fusion import (
+    discover_epoch_checkpoints,
     initial_streaming_state,
     load_state,
     save_state_atomic,
@@ -29,6 +30,28 @@ def writable_test_directory():
 
 
 class StreamingMaxFusionTests(unittest.TestCase):
+    def test_checkpoint_discovery_is_numeric_and_excludes_best(self):
+        with writable_test_directory() as directory:
+            (directory / "epoch_002.pt").write_bytes(b"two")
+            (directory / "best_validation_f1.pt").write_bytes(b"best")
+            (directory / "epoch_001.pt").write_bytes(b"one")
+            paths = discover_epoch_checkpoints(directory, expected_epochs=2)
+        self.assertEqual([path.name for path in paths], ["epoch_001.pt", "epoch_002.pt"])
+
+    def test_checkpoint_discovery_rejects_missing_epoch(self):
+        with writable_test_directory() as directory:
+            (directory / "epoch_001.pt").write_bytes(b"one")
+            (directory / "epoch_003.pt").write_bytes(b"three")
+            with self.assertRaises(RuntimeError):
+                discover_epoch_checkpoints(directory, expected_epochs=3)
+
+    def test_checkpoint_discovery_rejects_duplicate_numeric_epoch(self):
+        with writable_test_directory() as directory:
+            (directory / "epoch_1.pt").write_bytes(b"one")
+            (directory / "epoch_001.pt").write_bytes(b"duplicate")
+            with self.assertRaises(RuntimeError):
+                discover_epoch_checkpoints(directory, expected_epochs=1)
+
     def test_streaming_is_exactly_equal_to_materialized_float32_max(self):
         rng = np.random.default_rng(17)
         maps = [rng.random((5, 7), dtype=np.float32) for _ in range(6)]

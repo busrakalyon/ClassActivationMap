@@ -15,7 +15,12 @@ from PIL import Image
 from torch.utils.data import DataLoader, Subset
 
 from edge_finer_research.cams.edgecam import PaperEdgeCAM
+from edge_finer_research.cams.computation_profile import (
+    apply_scientific_cam_profile,
+    verify_scientific_cam_runtime,
+)
 from edge_finer_research.cams.streaming_fusion import (
+    discover_epoch_checkpoints,
     initial_streaming_state,
     load_state,
     save_state_atomic,
@@ -41,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--checkpoint-dir", type=Path)
     source.add_argument("--checkpoint", type=Path, action="append")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--metadata-output", type=Path)
     parser.add_argument("--split", default="test")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
@@ -63,15 +69,27 @@ def checkpoint_sort_key(path: Path) -> tuple[int, str]:
     return (int(match.group(1)), path.name) if match else (2**31 - 1, path.name)
 
 
-def resolve_checkpoints(args: argparse.Namespace) -> list[Path]:
-    paths = list(args.checkpoint or [])
+def resolve_checkpoints(args: argparse.Namespace, *, expected_epochs: int) -> list[Path]:
     if args.checkpoint_dir is not None:
-        paths = list(args.checkpoint_dir.glob("epoch_*.pt"))
+        return discover_epoch_checkpoints(
+            args.checkpoint_dir, expected_epochs=expected_epochs
+        )
+    paths = list(args.checkpoint or [])
     paths = sorted((path.resolve() for path in paths), key=checkpoint_sort_key)
     if not paths:
         raise RuntimeError("No epoch checkpoints found")
     if len(set(paths)) != len(paths):
         raise RuntimeError("Checkpoint list contains duplicates")
+    epochs = []
+    for path in paths:
+        match = re.fullmatch(r"epoch_(\d+)\.pt", path.name)
+        if not match:
+            raise RuntimeError(f"Not a strict epoch checkpoint filename: {path.name}")
+        epochs.append(int(match.group(1)))
+    if epochs != list(range(1, expected_epochs + 1)):
+        raise RuntimeError(
+            f"Explicit checkpoints must be epochs 1..{expected_epochs}, got {epochs}"
+        )
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(missing[0])
@@ -111,6 +129,7 @@ def run_contract(
     rows: list[ManifestRow],
     checkpoints: list[Path],
     config: dict[str, Any],
+    computation_profile: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "format_version": 1,
@@ -130,6 +149,7 @@ def run_contract(
         "samples": len(rows),
         "checkpoint_paths": [str(path) for path in checkpoints],
         "checkpoint_sha256": [checkpoint_sha256(path) for path in checkpoints],
+        "checkpoint_epochs": [int(re.fullmatch(r"epoch_(\d+)", path.stem).group(1)) for path in checkpoints],
         "total_checkpoints": len(checkpoints),
         "image_size": int(config["experiment"]["image_size"]),
         "positive_class": int(config["experiment"]["positive_class"]),
@@ -149,6 +169,8 @@ def run_contract(
         "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
         "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
         "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        "computation_profile": computation_profile,
+        "metadata_output": str(args.metadata_output.resolve()) if args.metadata_output else None,
     }
 
 
@@ -183,11 +205,16 @@ def main() -> None:
         raise RuntimeError(f"No manifest rows for split={args.split}")
     if len({row.sample_id for row in rows}) != len(rows):
         raise RuntimeError("Selected manifest split contains duplicate sample IDs")
-    checkpoints = resolve_checkpoints(args)
-    contract = run_contract(args, rows, checkpoints, config)
+    expected_epochs = int(config["training"]["epochs"])
+    checkpoints = resolve_checkpoints(args, expected_epochs=expected_epochs)
+    device = torch.device(args.device)
+    computation_profile = apply_scientific_cam_profile(device, batch_size=args.batch_size)
+    contract = run_contract(args, rows, checkpoints, config, computation_profile)
     output = args.output_dir
     state_dir = output / ".streaming_state"
     metadata_path = state_dir / "run_contract.json"
+    public_metadata_path = output / "run_metadata.json"
+    external_metadata_path = args.metadata_output
     completed_path = output / "completed.json"
 
     if args.resume:
@@ -196,6 +223,10 @@ def main() -> None:
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
         if existing != contract:
             raise RuntimeError("Resume contract differs from config/manifest/checkpoints/options")
+        if not public_metadata_path.is_file():
+            raise RuntimeError("Streaming public run metadata is missing")
+        if external_metadata_path is not None and not external_metadata_path.is_file():
+            raise RuntimeError("Configured external metadata output is missing")
         if completed_path.is_file():
             print(json.dumps({"status": "already_completed", "output": str(output)}, indent=2))
             return
@@ -204,13 +235,18 @@ def main() -> None:
             raise FileExistsError(
                 f"Output directory is not empty: {output}; use a new directory or --resume"
             )
+        if external_metadata_path is not None and external_metadata_path.exists():
+            raise FileExistsError(
+                f"External metadata output already exists: {external_metadata_path}"
+            )
         state_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(metadata_path, contract)
+        running_metadata = {"status": "running", **contract}
+        write_json_atomic(public_metadata_path, running_metadata)
+        if external_metadata_path is not None:
+            write_json_atomic(external_metadata_path, running_metadata)
 
     state_dir.mkdir(parents=True, exist_ok=True)
-    device = torch.device(args.device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA requested but torch.cuda.is_available() is false")
     dataset = ManifestClassificationDataset(
         rows, args.image_root, build_transforms(config, train=False)
     )
@@ -219,6 +255,7 @@ def main() -> None:
     image_size = int(config["experiment"]["image_size"])
     target_class = int(config["experiment"]["positive_class"])
     gate_threshold = float(config["edgecam"]["classification_gate"])
+    runtime_verification: dict[str, Any] | None = None
 
     for checkpoint_index, checkpoint_path in enumerate(checkpoints):
         pending_indices: list[int] = []
@@ -249,7 +286,7 @@ def main() -> None:
             )
             continue
 
-        model = build_model(config, pretrained=False).to(device)
+        model = build_model(config, pretrained=False).to(device=device, dtype=torch.float32)
         checkpoint = load_checkpoint(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model_state"], strict=True)
         model.eval()
@@ -272,7 +309,10 @@ def main() -> None:
             output_size=(image_size, image_size),
         ) as extractor:
             for images, labels, sample_ids in loader:
-                result = extractor.extract(images.to(device), target_class)
+                batch_images = images.to(device=device, dtype=torch.float32)
+                runtime_verification = verify_scientific_cam_runtime(model, batch_images)
+                with torch.amp.autocast(device_type="cuda", enabled=False):
+                    result = extractor.extract(batch_images, target_class)
                 probabilities = result.logits.softmax(dim=1).cpu().numpy()
                 for item_index, sample_id in enumerate(sample_ids):
                     row = by_id[sample_id]
@@ -327,6 +367,20 @@ def main() -> None:
         )
 
     predictions: list[dict[str, Any]] = []
+    if runtime_verification is None:
+        verification_model = build_model(config, pretrained=False).to(
+            device=device, dtype=torch.float32
+        )
+        final_checkpoint = load_checkpoint(checkpoints[-1], map_location=device)
+        verification_model.load_state_dict(final_checkpoint["model_state"], strict=True)
+        verification_model.eval()
+        verification_image = dataset[0][0][None].to(device=device, dtype=torch.float32)
+        runtime_verification = verify_scientific_cam_runtime(
+            verification_model, verification_image
+        )
+        del verification_model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
     for row in rows:
         state = load_state(state_path(state_dir, row.sample_id), expected_sample_id=row.sample_id)
         if state.processed_checkpoint_count != len(checkpoints):
@@ -366,6 +420,14 @@ def main() -> None:
             "state_retained": True,
         },
     )
+    completed_metadata = {
+        "status": "completed",
+        **contract,
+        "runtime_verification": runtime_verification,
+    }
+    write_json_atomic(public_metadata_path, completed_metadata)
+    if external_metadata_path is not None:
+        write_json_atomic(external_metadata_path, completed_metadata)
     print(json.dumps({"status": "completed", "output": str(output)}, indent=2))
 
 
