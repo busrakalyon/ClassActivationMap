@@ -204,8 +204,8 @@ python -m unittest tests.test_arcface.ArcFaceTests -v
 python -m unittest tests.test_edgecam_diagnostics -v
 ```
 
-Beklenen toplam test sayısı bu commit için 33'tür. Windows'taki PyTorch'suz geliştirme
-ortamında 27 test geçer ve 6 PyTorch testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
+Beklenen toplam test sayısı güncel commit için 39'dur. Windows'taki PyTorch'suz geliştirme
+ortamında 31 test geçer ve 8 PyTorch testi atlanır; Ubuntu ortamında atlama olmamalıdır.
 
 İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
 
@@ -246,3 +246,98 @@ Ana raporlar: `summary.json`, `gradient_statistics.csv`, `alpha_statistics.csv`,
 `threshold_analysis.csv`, `batch_consistency.json`, `gate_comparison.json` ve
 `visualizations/`. Ground-truth yalnız bu değerlendirme dosyalarında kullanılır; forward,
 gradyan, CAM hesabı veya loss'a girmez.
+
+## 8. Batch-shape sayısal diagnostik ve tam eğitim
+
+Bu test ana EdgeCAM formülünü, `epsilon=1e-8` değerini veya gate davranışını değiştirmez.
+Aynı checkpoint ve aynı örnekleri batch 1/4 altında dört CUDA profilinde karşılaştırır:
+TF32 açık/kapalı × deterministik açık/kapalı. Stage 2'den embedding ve ArcFace logits'e kadar
+katman çıktıları, gradyanlar, ana/diagnostik CAM paritesi, korelasyon, eşik maskesi IoU ve gate
+kararları kaydedilir. Aynı görüntünün üç ayrı batch-1 çalıştırması da sınanır.
+
+```bash
+cd ~/Desktop/ClassActivationMap
+git pull --ff-only
+source .venv/bin/activate
+
+python -m unittest discover -s tests -v
+
+python scripts/diagnose_batch_consistency.py \
+  --config configs/experiment1_pilot.toml \
+  --manifest manifests/casia_v2_pilot.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --checkpoint results/pilot/training/checkpoints/epoch_003.pt \
+  --output-root results/pilot/batch_diagnostics \
+  --split val --samples 4 --repeat-count 3 \
+  --thresholds 0.05 0.5
+```
+
+CPU float64 referansı daha yavaştır. Gerçek batch 1/4 karşılaştırması için yine dört örnek gerekir:
+
+```bash
+python scripts/diagnose_batch_consistency.py \
+  --config configs/experiment1_pilot.toml \
+  --manifest manifests/casia_v2_pilot.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --checkpoint results/pilot/training/checkpoints/epoch_003.pt \
+  --output-root results/pilot/batch_diagnostics \
+  --split val --samples 4 --repeat-count 3 \
+  --thresholds 0.05 0.5 --include-cpu-float64
+```
+
+Her çalışma yeni UTC dizininde `summary.json` ve `per_sample_comparisons.csv` üretir. Toleranslar
+`atol=1e-5`, `rtol=1e-4` olarak raporlanır; test geçsin diye otomatik genişletilmez. Deterministik
+algoritmalar sabit işlem şeklinin tekrarlanabilirliğini hedefler, farklı batch şekillerinin bit-eşit
+olacağını garanti etmez.
+
+Batch-1 tekrarları kararlı fakat batch 1/4 CAM maskeleri anlamlı biçimde farklıysa bilimsel CAM
+çıkarımı batch size 1 ile yapılmalıdır. Bu, eğitim batch size 16 değerini değiştirmez:
+
+```bash
+python scripts/generate_edgecam.py \
+  --config configs/experiment1_edgecam.toml \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --checkpoint results/experiment1_full_RUN/checkpoints/epoch_100.pt \
+  --output-dir results/experiment1_full_RUN/cams/casia_v2_val \
+  --split val --device cuda --batch-size 1
+```
+
+### Sıfırdan 100 epoch eğitim
+
+Komut resume içermez. `build_model(config)` ImageNet başlangıç ağırlıklarını yükler; pilot
+checkpoint kullanılmaz. Çıktı dizini her çalıştırmada benzersiz olmalıdır:
+
+```bash
+cd ~/Desktop/ClassActivationMap
+source .venv/bin/activate
+FULL_RUN="results/experiment1_full_$(date -u +%Y%m%dT%H%M%SZ)"
+
+python scripts/train_edgecam_classifier.py \
+  --config configs/experiment1_edgecam.toml \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --output-dir "$FULL_RUN" --device cuda
+```
+
+Her epoch terminalde tek satır JSON olarak yazılır. Aynı değerler `training_metrics.csv` ve
+`training_metrics.json` içinde tutulur: epoch, train/validation loss, I-F1, AUC, sensitivity,
+specificity, epoch sırasında kullanılan LR ve eğitim+validation süresi. Config'teki
+`checkpoint_every=1` nedeniyle `epoch_001.pt`–`epoch_100.pt` korunur; eski dosya otomatik
+silinmez. Aynı çıktı dizininde önceden eğitim metriği varsa kod üzerine yazmayı reddeder.
+
+Checkpoint ve CAM alanını gerçek dosyalardan hesaplamak için:
+
+```bash
+du -ch results/pilot/training/checkpoints/epoch_*.pt
+python -c "from pathlib import Path; p=list(Path('results/pilot/training/checkpoints').glob('epoch_*.pt')); a=sum(x.stat().st_size for x in p)/len(p); print('100 checkpoint GiB:', a*100/2**30)"
+python -c "print('CASIAv1 100x512x512 float32 GiB:', 1720*100*512*512*4/2**30); print('CASIAv2 val GiB:', 901*100*512*512*4/2**30)"
+```
+
+Ham float32 CAM tahmini CASIAv1 için yaklaşık 168 GiB, 901 örneklik CASIAv2 validation için
+yaklaşık 88 GiB'dir. Mevcut `np.savez_compressed` kayıpsızdır fakat sıkıştırma oranı haritaya
+bağlıdır. Alan sınırlıysa epoch haritalarını kalıcı saklamak yerine checkpoint'leri sırayla okuyup
+her örnek için yalnız çalışan piksel maksimumu ve `valid_epochs` sayısını tutan streaming
+max-fusion kullanılmalıdır. Bu mod ayrı sonuç dizinine yazılmalı; var olan CAM veya checkpoint
+dosyaları silinmemelidir.

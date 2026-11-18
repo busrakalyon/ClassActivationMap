@@ -65,6 +65,17 @@ def main() -> None:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    protected_outputs = [
+        args.output_dir / "training_metrics.csv",
+        args.output_dir / "training_metrics.json",
+        args.output_dir / "checkpoints" / "best_validation_f1.pt",
+        *sorted((args.output_dir / "checkpoints").glob("epoch_*.pt")),
+    ]
+    if any(path.exists() for path in protected_outputs):
+        raise FileExistsError(
+            "Output directory already contains training metrics/checkpoints; "
+            "use a new run directory to avoid overwriting results"
+        )
     shutil.copy2(args.config, args.output_dir / "resolved_experiment_config.toml")
     shutil.copy2(args.manifest, args.output_dir / "training_manifest.csv")
     manifest_digest = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
@@ -78,6 +89,8 @@ def main() -> None:
         "mask_usage": "manifest_validation_only_not_classifier_target",
         "seed": int(config["experiment"]["seed"]),
         "inference_policy": "label_free_scaled_cosine",
+        "initialization": "torchvision_efficientnet_b0_imagenet1k_v1",
+        "resume_checkpoint": None,
     }
     (args.output_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     train_experiment1(build_model(config), train_loader, validation_loader, config, args.output_dir, device)
