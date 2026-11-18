@@ -179,3 +179,70 @@ bulunur. Piksel eşiği CASIAv2 validation'da seçilmeli; CASIAv1'de değiştiri
 | Epoch füzyonu | Fake olasılığı `>=.5`, max en iyi | Argmax fake, piksel max | Fake olasılığı `>=.5`, float max |
 | SOP üretimi | MCG tabanlı, top 50 | Üretici yok; kısmi `seg.py` UCM denemesi | Üretici yok; yalnız doğrulanmış 50 öneriyi skorlar |
 | Validation | Belirtilmemiş | Train/val yolları çoğu config'de aynı | Kaynak-gruplu %10 CASIAv2 val; test tuning yok |
+
+## 7. EdgeCAM matematik diagnostikleri (mevcut Ubuntu ortamı)
+
+Bu bölüm, çalışan `.venv` ortamını değiştirmez ve otomatik bağımlılık senkronizasyonu yapmaz.
+Komutlar yalnız CASIAv2 pilot `val` ayrımını okur; checkpoint, manifest, ana EdgeCAM kodu ve
+veri seti değiştirilmez. CASIAv1 bu diagnostik seçimlerde kullanılmamalıdır.
+
+Önce kodu ve mevcut ortamı doğrulayın:
+
+```bash
+cd ~/Desktop/ClassActivationMap
+git pull --ff-only
+source .venv/bin/activate
+python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.version.cuda, torch.cuda.get_device_name(0))"
+python -m unittest discover -s tests -v
+```
+
+Özellikle NumPy–PyTorch paritesi, label-free ArcFace ve yeni diagnostik testleri:
+
+```bash
+python -m unittest tests.test_edgecam_math.EdgeCAMTorchParityTests -v
+python -m unittest tests.test_arcface.ArcFaceTests -v
+python -m unittest tests.test_edgecam_diagnostics -v
+```
+
+Beklenen toplam test sayısı bu commit için 33'tür. Windows'taki PyTorch'suz geliştirme
+ortamında 27 test geçer ve 6 PyTorch testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
+
+İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
+
+```bash
+python scripts/diagnose_edgecam.py \
+  --config configs/experiment1_pilot.toml \
+  --manifest manifests/casia_v2_pilot.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --checkpoint-dir results/pilot/training/checkpoints \
+  --output-root results/pilot/diagnostics \
+  --split val --device cuda --batch-size 4 --limit 8 \
+  --batch-consistency-count 8
+```
+
+Alt küme tamamlandıktan sonra 128 pilot validation görüntüsünün tamamı:
+
+```bash
+python scripts/diagnose_edgecam.py \
+  --config configs/experiment1_pilot.toml \
+  --manifest manifests/casia_v2_pilot.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --checkpoint-dir results/pilot/training/checkpoints \
+  --output-root results/pilot/diagnostics \
+  --split val --device cuda --batch-size 4 \
+  --batch-consistency-count 8
+```
+
+Her çalıştırma `results/pilot/diagnostics/<UTC-zaman>/` altında yeni bir dizin açar; var olan
+çıktının üzerine yazmaz. `--keep-epoch-maps` verilmedikçe ara NPZ önbelleği raporlar üretildikten
+sonra kaldırılır. Varsayılan sınır bantları 3×3 dilation/erosion ile 1, 2 ve 3 iterasyondur.
+Varsayılan eşik grid'i `0.001`–`0.5` aralığındaki genişletilmiş diagnostik listedir. Bunlar yalnız
+validation diagnostikleridir ve nihai test sonucu değildir.
+
+Ana raporlar: `summary.json`, `gradient_statistics.csv`, `alpha_statistics.csv`,
+`cam_statistics.csv`, `per_image_metrics.csv`, `variant_comparison.csv`,
+`threshold_analysis.csv`, `batch_consistency.json`, `gate_comparison.json` ve
+`visualizations/`. Ground-truth yalnız bu değerlendirme dosyalarında kullanılır; forward,
+gradyan, CAM hesabı veya loss'a girmez.
