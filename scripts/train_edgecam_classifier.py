@@ -21,12 +21,22 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--image-root", type=Path, required=True)
+    parser.add_argument(
+        "--mask-root",
+        type=Path,
+        required=True,
+        help="Used only for manifest integrity checks; masks are not classifier targets",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     config = load_toml(args.config)
     rows = read_manifest(args.manifest)
-    issues = validate_manifest(rows, image_root=args.image_root)
+    issues = validate_manifest(
+        rows,
+        image_root=args.image_root,
+        mask_root=args.mask_root,
+    )
     if any(issue.level == "error" for issue in issues):
         raise RuntimeError(f"Manifest has errors: {issues[:10]}")
     train_rows = [row for row in rows if row.split == "train"]
@@ -41,6 +51,7 @@ def main() -> None:
         "pin_memory": args.device.startswith("cuda"),
     }
     train_loader = DataLoader(
+        # Weak supervision: this dataset reads images and image-level labels only.
         ManifestClassificationDataset(train_rows, args.image_root, build_transforms(config, train=True)),
         shuffle=True,
         **common,
@@ -64,6 +75,7 @@ def main() -> None:
         "device": str(device),
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "manifest_sha256": manifest_digest,
+        "mask_usage": "manifest_validation_only_not_classifier_target",
         "seed": int(config["experiment"]["seed"]),
         "inference_policy": "label_free_scaled_cosine",
     }

@@ -91,13 +91,29 @@ def validate_manifest(
     mask_root: str | Path | None = None,
     verify_hashes: bool = False,
 ) -> list[ValidationIssue]:
-    """Validate labels, IDs, group isolation and optionally files/hashes."""
+    """Validate labels, IDs, group isolation and optionally files/hashes.
+
+    Image and mask roots are independent. Callers that request file validation
+    for a manifest containing masks must pass ``mask_root`` explicitly, even
+    when both roots happen to point to the same directory.
+    """
     rows = list(rows)
     issues: list[ValidationIssue] = []
     seen_ids: set[str] = set()
     group_splits: dict[str, set[str]] = {}
     image_root_path = Path(image_root) if image_root is not None else None
-    mask_root_path = Path(mask_root) if mask_root is not None else image_root_path
+    mask_root_path = Path(mask_root) if mask_root is not None else None
+
+    if image_root_path is not None and mask_root_path is None and any(
+        row.mask_relpath for row in rows
+    ):
+        issues.append(
+            ValidationIssue(
+                "error",
+                "__manifest__",
+                "mask_root is required when validating files for a manifest containing masks",
+            )
+        )
 
     for row in rows:
         if row.sample_id in seen_ids:

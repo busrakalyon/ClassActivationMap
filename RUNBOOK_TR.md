@@ -145,8 +145,25 @@ uv run python scripts/train_edgecam_classifier.py \
   --config configs/experiment1_edgecam.toml \
   --manifest manifests/casia_v2.csv \
   --image-root /data/edgecam/datasets/CASIA2_corrected \
+  --mask-root /data/edgecam/datasets/CASIA2_corrected/Gt \
   --output-dir /data/edgecam/checkpoints/experiment1 --device cuda
 ```
+
+Kullanıcı dizini altındaki düzeltilmiş paket için karşılığı:
+
+```bash
+uv run python scripts/train_edgecam_classifier.py \
+  --config configs/experiment1_edgecam.toml \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --output-dir ~/edgecam_data/checkpoints/experiment1 \
+  --device cuda
+```
+
+`--mask-root` yalnız manifest dosya/hash doğrulamasında kullanılır. Sınıflandırıcı
+`ManifestClassificationDataset` üzerinden yalnız görüntü, image-level gerçek/sahte etiketi
+ve örnek kimliği alır; maske loss'a veya model girdisine verilmez.
 
 CAM üretimi, validation eşiği ve değerlendirme CLI'larının ayrıntıları `--help` çıktılarında
 bulunur. Piksel eşiği CASIAv2 validation'da seçilmeli; CASIAv1'de değiştirilmemelidir.
