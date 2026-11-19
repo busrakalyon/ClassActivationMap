@@ -204,8 +204,8 @@ python -m unittest tests.test_arcface.ArcFaceTests -v
 python -m unittest tests.test_edgecam_diagnostics -v
 ```
 
-Beklenen toplam test sayısı güncel commit için 48'dir. Windows'taki PyTorch'suz geliştirme
-ortamında 39 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
+Beklenen toplam test sayısı güncel commit için 56'dır. Windows'taki PyTorch'suz geliştirme
+ortamında 47 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
 
 İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
 
@@ -501,3 +501,90 @@ Her örnek güncellemesi geçici dosya + `os.replace` ile atomiktir. Durumdaki
 Config, manifest, checkpoint hash'leri, batch size, cihaz ve sayısal backend sözleşmesi farklıysa
 resume reddedilir. `.streaming_state/` finalden sonra denetim için korunur; kod mevcut durum,
 checkpoint veya CAM dosyalarını otomatik silmez.
+
+## 10. CASIAv1/CASIAv2 sızıntı denetimi
+
+Denetim; dosya SHA-256, decode edilmiş RGB SHA-256, 64-bit DCT perceptual hash ve manifestteki
+CASIA kaynak kimliklerini ayrı ayrı raporlar. Perceptual-hash eşleşmesi yalnız manuel inceleme
+adayıdır ve tek başına test örneğini otomatik dışlamaz. Train–test ve validation–test sayıları ile
+gerçek/sahte sınıf çiftleri `summary.json` içinde ayrı tutulur.
+
+Her çalıştırma yeni zaman damgalı bir dizine yazılır; önceki metadata üzerine yazılmaz:
+
+```bash
+cd ~/Desktop/ClassActivationMap
+source .venv/bin/activate
+OVERLAP_OUT="results/00_metadata/dataset_overlap/run_$(date -u +%Y%m%dT%H%M%SZ)"
+
+python scripts/audit_dataset_overlap.py \
+  --casia-v2-manifest manifests/casia_v2.csv \
+  --casia-v2-image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --casia-v1-manifest manifests/casia_v1.csv \
+  --casia-v1-image-root ~/edgecam_data/datasets/CASIA1_ready \
+  --output-dir "$OVERLAP_OUT" \
+  --phash-max-distance 8
+```
+
+Çıktılar:
+
+- `exact_file_sha256.csv`: kodlanmış dosya baytları birebir aynı çiftler.
+- `exact_decoded_rgb.csv`: dosya biçimi farklı olsa da boyut ve RGB pikselleri aynı çiftler.
+- `perceptual_hash_candidates.csv`: Hamming uzaklığı en fazla 8 olan manuel inceleme adayları.
+- `shared_source_ids.csv`: ortak CASIA host/donor kimliği taşıyan türevler.
+- `recommended_test_exclusions.csv`: kesin eşleşme veya ortak kaynak nedeniyle önerilen dışlamalar.
+- `casia_v1_source_disjoint_proposed.csv`: önerilen dışlama varsa üretilen ayrı test manifesti.
+
+Önerilen manifest ana `manifests/casia_v1.csv` dosyasını değiştirmez. Literatürle karşılaştırılan
+özgün CASIAv1 sonucu ve sızıntısız ikincil sonuç ayrı satırlarda raporlanmalıdır. Perceptual-hash
+adayları görüntüler yan yana doğrulanmadan temiz manifeste eklenmemelidir.
+
+## 11. Mevcut fused CAM'leri yeniden eşikleme
+
+Bu işlem checkpoint yüklemez ve CAM üretmez. `results/02_edgecam/casia_v2_val/*.npy` içindeki
+yerel çözünürlüklü float32 fused CAM'leri okur. Seçim yalnız sahte validation görüntülerindeki
+makro P-F1 ile yapılır; eşitlikte önce yüksek IoU, sonra düşük eşik seçilir. Sıfır CAM pozitif
+eşiklerde boş kalır.
+
+```bash
+python scripts/rethreshold_fused_cams.py \
+  --manifest manifests/casia_v2.csv \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --fused-cam-dir results/02_edgecam/casia_v2_val \
+  --output-dir results/02_edgecam/casia_v2_selected_threshold \
+  --split val \
+  --thresholds 0.001 0.005 0.01 0.02 0.03 0.04 0.05 0.075 0.1 0.15 0.5
+
+python scripts/evaluate.py \
+  --manifest manifests/casia_v2.csv \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --prediction-dir results/02_edgecam/casia_v2_selected_threshold/masks \
+  --image-predictions results/02_edgecam/casia_v2_val/image_predictions.csv \
+  --output-dir results/02_edgecam/casia_v2_selected_threshold/evaluation \
+  --split val --prediction-suffix __pre_sop.npy --pixel-scope fake
+```
+
+`threshold_analysis.csv` her eşik için P-F1, IoU, sahte örneklerde ortalama tahmini alan,
+tüm validation kümesindeki tahmini alan ve gerçek manipülasyon alanı oranını içerir.
+`selection.json` tamamen boş/tam dolu referanslarını ve seçilen eşiği kaydeder. Yalnız seçilen
+eşik maskeleri `masks/` altına yazılır. Çıktı dizini doluysa betik üzerine yazmayı reddeder.
+
+CASIAv1 testinde yeni eşik seçimi yapılmaz. Validation'da seçilen değer CASIAv1 komutuna sabit
+olarak aktarılır.
+
+## 12. SOP artefakt durumu
+
+EdgeCAM makalesi sayfa 5, Denklem 7–8 ve Algorithm 1; görüntü başına 50 SOP maskesinin
+kenarlarını morfolojik genişletme/erozyonla çıkarır, fused EdgeCAM ile kenar skorunu toplar ve
+en yüksek skorlu maskeyi seçer. Makale SOP üreticisi olarak Pont-Tuset vd. MCG'yi gösterir.
+
+Özgün depoda SOP üretim kodu veya CASIA'ya ait öneri dosyaları yoktur. README yalnız Baidu
+paket bağlantısını verir. `seg.py` içindeki sabit Windows yollu UCM/connected-components kodu,
+makalenin 50 SOP üreticisini yeniden kurmaz. Yazar paketinin arşiv hash'i, örnek başına tam 50
+maske içerip içermediği, çözünürlük/koordinat düzeni, polarite, sıralama ve dosya isim eşleşmesi
+paket edinilmeden doğrulanamaz.
+
+Resmî MCG `pre-trained` akışı Linux/macOS, MATLAB ve derlenmiş bileşenler gerektirir; Python/uv
+bağımlılığı değildir. Bu nedenle yazar artefaktı yokken alternatif segmentasyon eklenmeyecek ve
+SOP sonrası EdgeCAM sonucu raporlanmayacaktır. Mevcut NPZ `[50,H,W]`, `proposals` anahtarı
+sözleşmesi yalnız doğrulanmış maskeler için proje-içi taşıma biçimidir; özgün yazar dosya biçimi
+olduğu iddia edilmez.
