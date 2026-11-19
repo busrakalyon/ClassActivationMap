@@ -47,27 +47,24 @@ komutlardaki yolları gerektiği kadar düzeltin.
 
 ## 2. SOP
 
-Makalenin kaynağı MCG'dir: Pont-Tuset vd., *Multiscale Combinatorial Grouping*, TPAMI
-39(1), 2017. Makale top-50 segment önerisini kullanır fakat MCG model varyantı, sıralama ve
-ön/son işleme ayrıntılarını yayımlamaz.
+Bu çalışmada yazarların precomputed SOP paketi kullanılmaz. Tek proposal üreticisi resmî
+`jponttuset/mcg` deposunun `pre-trained` sürümüdür ve sonuçlar açıkça
+`MCG-reconstructed SOP` olarak raporlanır. Baidu indirmesi ve yazar e-postası iş akışından
+çıkarılmıştır.
 
-Öncelik sırası:
+Ubuntu smoke testinde MATLAB R2026b, gerekli toolbox'lar, `install.m` ve
+`im2mcg(I,'accurate',0)` doğrulanmıştır. Resmî MCG çıktısı zaten azalan proposal skoruna göre
+sıralıdır. İlk 50 maske, bütün binlerce maskeyi materialize etmek yerine
+`ismember(proposals.superpixels, proposals.labels{i})` ile çıkarılır.
 
-1. Yazarın resmî Baidu paketi: `https://pan.baidu.com/s/1PXUHecO7TT66DUikOh4epg?pwd=vfms`
-   (çıkarma kodu `vfms`). İndirildikten sonra arşiv hash'i ve dosya biçimi kaydedilmeli.
-2. Erişim yoksa yazarlara `yzhoulv@foxmail.com` üzerinden CASIAv1/CASIAv2 SOP artefaktı,
-   MCG sürümü ve top-50 üretim komutu sorulmalı.
-3. Resmî MCG kodu `https://github.com/jponttuset/mcg` ile yeniden üretim yapılabilir; fakat
-   bu sonuç “özgün SOP” değil, “MCG-reconstruction” olarak ayrı raporlanmalıdır.
+Ortak cache sözleşmesi kayıpsız sıkıştırılmış NPZ'dir:
 
-Resmî MCG paketinin önceden eğitilmiş sürümü MATLAB ve bazı derlenmiş bileşenlere dayanır;
-yalnız `uv` ile kurulabilen saf Python çözümü değildir. Bu Ubuntu hesabında MATLAB/runtime
-yoksa SOP'yi yeniden üretmenin güvenilir yolu yazar artefaktını edinmektir. Yerel özgün
-`seg.py` içindeki UCM eşikleme/connected-components denemesi de makaledeki top-50 MCG
-üreticisinin uygulaması değildir.
+- `masks`: `[H,W,50]`, binary `uint8`;
+- `scores`: resmî MCG'nin sıralı ilk 50 skoru, `float64`;
+- `ranks`: `1..50`, `int32`.
 
-Mevcut `apply_sop.py`, yalnız doğrulanmış `[50,H,W]` NPZ önerilerini skorlar. Baidu
-paketinin biçimi görülmeden otomatik dönüştürücü yazılmamıştır.
+Bu cache görüntüye bağlıdır; EdgeCAM, Finer-CAM ve ilerideki füzyon deneyleri aynı dosyaları
+kullanabilir. Üretim ve değerlendirme komutları Bölüm 12'dedir.
 
 ## 3. Git, ortam ve test sırası
 
@@ -177,7 +174,7 @@ bulunur. Piksel eşiği CASIAv2 validation'da seçilmeli; CASIAv1'de değiştiri
 | ArcFace inference | Açıklanmamış | Gerçek etiketi margin hesabına verir | Label-free `s*cos(theta)`; sızıntısız fakat koddan farklı |
 | CAM sonrası | Denklem 2–4; normalizasyon/final ReLU açık değil | Haritayı kareler, `uint8`, resize | İsteğe bağlı final ReLU + min-max; kare alma yok |
 | Epoch füzyonu | Fake olasılığı `>=.5`, max en iyi | Argmax fake, piksel max | Fake olasılığı `>=.5`, float max |
-| SOP üretimi | MCG tabanlı, top 50 | Üretici yok; kısmi `seg.py` UCM denemesi | Üretici yok; yalnız doğrulanmış 50 öneriyi skorlar |
+| SOP üretimi | MCG tabanlı, top 50 | Üretici yok; kısmi `seg.py` UCM denemesi | Resmî MCG `accurate`, sıralı top-50; `MCG-reconstructed` olarak raporlanır |
 | Validation | Belirtilmemiş | Train/val yolları çoğu config'de aynı | Kaynak-gruplu %10 CASIAv2 val; test tuning yok |
 
 ## 7. EdgeCAM matematik diagnostikleri (mevcut Ubuntu ortamı)
@@ -204,8 +201,8 @@ python -m unittest tests.test_arcface.ArcFaceTests -v
 python -m unittest tests.test_edgecam_diagnostics -v
 ```
 
-Beklenen toplam test sayısı güncel commit için 56'dır. Windows'taki PyTorch'suz geliştirme
-ortamında 47 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
+Beklenen toplam test sayısı güncel commit için 62'dir. Windows'taki PyTorch'suz geliştirme
+ortamında 53 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
 
 İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
 
@@ -471,15 +468,7 @@ python scripts/evaluate.py \
   --split test --prediction-suffix __pre_sop.npy --pixel-scope fake
 ```
 
-SOP artefaktı mevcutsa aynı fused dizin doğrudan kullanılabilir:
-
-```bash
-python scripts/apply_sop.py \
-  --manifest manifests/casia_v1.csv \
-  --fused-cam-dir results/02_edgecam/casia_v1_test \
-  --proposal-dir SOP_ARTEFAKT_DIZINI \
-  --output-dir results/02_edgecam/casia_v1_test/sop --split test
-```
+MCG-reconstructed SOP akışı ve güncel test komutları Bölüm 12'dedir.
 
 ### Güvenli devam
 
@@ -571,20 +560,165 @@ eşik maskeleri `masks/` altına yazılır. Çıktı dizini doluysa betik üzeri
 CASIAv1 testinde yeni eşik seçimi yapılmaz. Validation'da seçilen değer CASIAv1 komutuna sabit
 olarak aktarılır.
 
-## 12. SOP artefakt durumu
+## 12. MCG-reconstructed SOP ile EdgeCAM baseline
 
-EdgeCAM makalesi sayfa 5, Denklem 7–8 ve Algorithm 1; görüntü başına 50 SOP maskesinin
-kenarlarını morfolojik genişletme/erozyonla çıkarır, fused EdgeCAM ile kenar skorunu toplar ve
-en yüksek skorlu maskeyi seçer. Makale SOP üreticisi olarak Pont-Tuset vd. MCG'yi gösterir.
+### 12.1 Ortam değişkenleri
 
-Özgün depoda SOP üretim kodu veya CASIA'ya ait öneri dosyaları yoktur. README yalnız Baidu
-paket bağlantısını verir. `seg.py` içindeki sabit Windows yollu UCM/connected-components kodu,
-makalenin 50 SOP üreticisini yeniden kurmaz. Yazar paketinin arşiv hash'i, örnek başına tam 50
-maske içerip içermediği, çözünürlük/koordinat düzeni, polarite, sıralama ve dosya isim eşleşmesi
-paket edinilmeden doğrulanamaz.
+```bash
+cd ~/Desktop/ClassActivationMap
+source .venv/bin/activate
 
-Resmî MCG `pre-trained` akışı Linux/macOS, MATLAB ve derlenmiş bileşenler gerektirir; Python/uv
-bağımlılığı değildir. Bu nedenle yazar artefaktı yokken alternatif segmentasyon eklenmeyecek ve
-SOP sonrası EdgeCAM sonucu raporlanmayacaktır. Mevcut NPZ `[50,H,W]`, `proposals` anahtarı
-sözleşmesi yalnız doğrulanmış maskeler için proje-içi taşıma biçimidir; özgün yazar dosya biçimi
-olduğu iddia edilmez.
+MCG_ROOT=~/edgecam_tools/mcg/pre-trained
+MATLAB_BIN=~/edgecam_tools/MATLAB/bin/matlab
+SOP_ROOT=results/06_shared_sop/mcg_reconstructed
+
+test -x "$MATLAB_BIN"
+test -f "$MCG_ROOT/im2mcg.m"
+git -C "$MCG_ROOT" rev-parse HEAD
+```
+
+MATLAB her parçada yalnız sıralı ilk 50 binary maskeyi üretir. Python bunları
+`np.savez_compressed` ile kayıpsız NPZ cache'e dönüştürür ve başarılı dönüşümden sonra büyük
+geçici binary dosyaları kaldırır. Varsayılan parça büyüklüğü 10 görüntüdür. Kesinti sonrasında
+aynı komut tekrar çalıştırılır; geçerli NPZ+metadata çiftleri hash ve şekil kontrolünden sonra
+atlanır, tamamlanmış MATLAB ara çıktıları finalize edilir.
+
+Resmî `im2mcg.m`, 2.5 megapiksel üzerindeki görüntülerde istenen `accurate` modu sessizce
+`fast` moda çevirir. Cache üreticisi yanlış metadata oluşmaması için bu durumda örneği hata
+olarak kaydeder; otomatik resize veya SCG fallback uygulamaz.
+
+### 12.2 CASIAv2 validation proposal cache
+
+```bash
+python scripts/generate_mcg_proposals.py \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --split val \
+  --output-dir "$SOP_ROOT/casia_v2_val" \
+  --metadata-dir "$SOP_ROOT/metadata/casia_v2_val" \
+  --mcg-root "$MCG_ROOT" \
+  --matlab-bin "$MATLAB_BIN" \
+  --mode accurate --top-k 50 --chunk-size 10
+
+python scripts/generate_mcg_proposals.py \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --split val \
+  --output-dir "$SOP_ROOT/casia_v2_val" \
+  --metadata-dir "$SOP_ROOT/metadata/casia_v2_val" \
+  --mcg-root "$MCG_ROOT" \
+  --matlab-bin "$MATLAB_BIN" \
+  --mode accurate --top-k 50 --verify-only
+```
+
+İkinci komut 901 örneğin tamamında dosya, görüntü SHA-256, çözünürlük, top-50 sayısı, binary
+değerler, ranking ve metadata sözleşmesini yeniden doğrular. Örnek metadata; toplam MCG
+proposal sayısı, MATLAB sürümü, resmî MCG kaynak yolu/commit'i ve NPZ yolunu içerir.
+
+### 12.3 EdgeCAM SOP scoring
+
+Ground-truth ve görüntü etiketi bu komuta verilmez. Seçim, sürekli float32 fused CAM ile makale
+Denklem 7–8'deki `sum(proposal_boundary * fused_cam)` skoruna göre yapılır:
+
+```bash
+python scripts/apply_sop.py \
+  --manifest manifests/casia_v2.csv \
+  --fused-cam-dir results/02_edgecam/casia_v2_val \
+  --proposal-dir "$SOP_ROOT/casia_v2_val" \
+  --proposal-metadata-dir "$SOP_ROOT/metadata/casia_v2_val" \
+  --proposal-format mcg_hwk \
+  --output-dir results/02_edgecam/casia_v2_val_sop \
+  --split val --expected-count 50 --kernel-size 3 --iterations 1
+```
+
+Kesinti olursa aynı seçeneklerle `--resume` eklenir. Mevcut fused CAM dosyaları değiştirilmez.
+`kernel-size=3` ve tek morfoloji iterasyonu yeniden-uygulama parametreleridir; makale Denklem 7
+genişletme/erozyon işlemlerini tanımlar fakat structuring-element ayrıntısını belirtmez.
+
+### 12.4 Validation değerlendirme ve görseller
+
+```bash
+python scripts/evaluate.py \
+  --manifest manifests/casia_v2.csv \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --prediction-dir results/02_edgecam/casia_v2_val_sop \
+  --image-predictions results/02_edgecam/casia_v2_val/image_predictions.csv \
+  --output-dir results/02_edgecam/casia_v2_val_sop_evaluation \
+  --split val --prediction-suffix __post_sop.npy --pixel-scope fake
+
+python scripts/visualize_sop_results.py \
+  --manifest manifests/casia_v2.csv \
+  --image-root ~/edgecam_data/datasets/CASIA2_corrected/casia \
+  --mask-root ~/edgecam_data/datasets/CASIA2_corrected/casia/Gt \
+  --fused-cam-dir results/02_edgecam/casia_v2_val \
+  --prediction-dir results/02_edgecam/casia_v2_val_sop \
+  --output-dir results/02_edgecam/casia_v2_val_sop_visualizations \
+  --split val --sample-count 20
+```
+
+`evaluate.py` P-F1, IoU, I-F1, AUC ve C-F1 üretir. Ground-truth yalnız bu değerlendirme ve
+görselleştirme adımlarında kullanılır. Görselleştirme renk dönüşümü metrik girdilerini değiştirmez.
+
+### 12.5 CASIAv1 test karar ve çalışma sırası
+
+Önce Bölüm 10'daki overlap denetimi çalıştırılır. Karar kuralı:
+
+- Literatürdeki EdgeCAM protokolüyle doğrudan karşılaştırılacak ana satır
+  `manifests/casia_v1.csv` ile üretilir.
+- `recommended_test_exclusions.csv` boş değilse
+  `casia_v1_source_disjoint_proposed.csv` değiştirilmeden korunur ve ayrıca sızıntı-kontrollü
+  ikincil test olarak raporlanır.
+- Perceptual-hash-only adayları manuel doğrulama olmadan dışlanmaz.
+
+CASIAv1'in tamamı için MCG cache yalnız bir kez üretilir; temiz alt manifest gerekirse aynı cache'i
+yeniden kullanır:
+
+```bash
+python scripts/generate_mcg_proposals.py \
+  --manifest manifests/casia_v1.csv \
+  --image-root ~/edgecam_data/datasets/CASIA1_ready \
+  --split test \
+  --output-dir "$SOP_ROOT/casia_v1_test" \
+  --metadata-dir "$SOP_ROOT/metadata/casia_v1_test" \
+  --mcg-root "$MCG_ROOT" \
+  --matlab-bin "$MATLAB_BIN" \
+  --mode accurate --top-k 50 --chunk-size 10
+```
+
+Ana literatür karşılaştırması için:
+
+```bash
+TEST_MANIFEST=manifests/casia_v1.csv
+TEST_TAG=casia_v1_test
+VALIDATION_THRESHOLD=$(python -c "import json; print(json.load(open('results/02_edgecam/casia_v2_selected_threshold/selection.json'))['threshold'])")
+
+python scripts/stream_edgecam_fusion.py \
+  --config configs/experiment1_edgecam.toml \
+  --manifest "$TEST_MANIFEST" \
+  --image-root ~/edgecam_data/datasets/CASIA1_ready \
+  --checkpoint-dir results/01_shared_training/checkpoints \
+  --output-dir "results/02_edgecam/$TEST_TAG" \
+  --metadata-output "results/00_metadata/edgecam_${TEST_TAG}.json" \
+  --split test --device cuda --batch-size 1 --threshold "$VALIDATION_THRESHOLD"
+
+python scripts/apply_sop.py \
+  --manifest "$TEST_MANIFEST" \
+  --fused-cam-dir "results/02_edgecam/$TEST_TAG" \
+  --proposal-dir "$SOP_ROOT/casia_v1_test" \
+  --proposal-metadata-dir "$SOP_ROOT/metadata/casia_v1_test" \
+  --proposal-format mcg_hwk \
+  --output-dir "results/02_edgecam/${TEST_TAG}_sop" \
+  --split test --expected-count 50 --kernel-size 3 --iterations 1
+
+python scripts/evaluate.py \
+  --manifest "$TEST_MANIFEST" \
+  --mask-root ~/edgecam_data/datasets/CASIA1_groundtruth/CASIA\ 1.0\ groundtruth \
+  --prediction-dir "results/02_edgecam/${TEST_TAG}_sop" \
+  --image-predictions "results/02_edgecam/$TEST_TAG/image_predictions.csv" \
+  --output-dir "results/02_edgecam/${TEST_TAG}_sop_evaluation" \
+  --split test --prediction-suffix __post_sop.npy --pixel-scope fake
+```
+
+Source-disjoint ikincil test çalıştırılacaksa yalnız `TEST_MANIFEST` ve `TEST_TAG` yeni bir shell'de
+önerilen manifestin gerçek yoluna göre değiştirilir; original ve temiz test çıktıları aynı dizine
+yazılmaz. CASIAv1 üzerinde eşik veya başka hiperparametre seçilmez.
