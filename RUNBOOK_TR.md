@@ -201,8 +201,8 @@ python -m unittest tests.test_arcface.ArcFaceTests -v
 python -m unittest tests.test_edgecam_diagnostics -v
 ```
 
-Beklenen toplam test sayısı güncel commit için 62'dir. Windows'taki PyTorch'suz geliştirme
-ortamında 53 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
+Beklenen toplam test sayısı güncel commit için 67'dir. Windows'taki PyTorch'suz geliştirme
+ortamında 58 test geçer ve 9 PyTorch/CUDA testi atlanır; Ubuntu GPU ortamında atlama olmamalıdır.
 
 İlk çalışma için, sabit seed ile seçilen ve iki sınıfı da içeren 8 görüntülük küçük alt küme:
 
@@ -448,7 +448,7 @@ CASIAv1 çalıştırmasında `VALIDATION_THRESHOLD`, yalnız yukarıdaki CASIAv2
 raporundan alınmalıdır:
 
 ```bash
-VALIDATION_THRESHOLD="CASIAV2_VALIDATION_DEGERI"
+VALIDATION_THRESHOLD=0.05  # Yalnız CASIAv2 validation'da seçilmiş değer
 
 python scripts/stream_edgecam_fusion.py \
   --config configs/experiment1_edgecam.toml \
@@ -690,7 +690,7 @@ Ana literatür karşılaştırması için:
 ```bash
 TEST_MANIFEST=manifests/casia_v1.csv
 TEST_TAG=casia_v1_test
-VALIDATION_THRESHOLD=$(python -c "import json; print(json.load(open('results/02_edgecam/casia_v2_selected_threshold/selection.json'))['threshold'])")
+VALIDATION_THRESHOLD=0.05  # Daha önce yalnız CASIAv2 validation'da seçilen değer
 
 python scripts/stream_edgecam_fusion.py \
   --config configs/experiment1_edgecam.toml \
@@ -722,3 +722,185 @@ python scripts/evaluate.py \
 Source-disjoint ikincil test çalıştırılacaksa yalnız `TEST_MANIFEST` ve `TEST_TAG` yeni bir shell'de
 önerilen manifestin gerçek yoluna göre değiştirilir; original ve temiz test çıktıları aynı dizine
 yazılmaz. CASIAv1 üzerinde eşik veya başka hiperparametre seçilmez.
+
+## 13. Columbia HiFi fake-only EdgeCAM testi
+
+Bu arşivde yalnız `vallist.txt` ile listelenen 180 sahte/splicing görüntü ve maskeleri vardır;
+gerçek Columbia görüntüleri yoktur. Bu nedenle bu çalışma P-F1 ve IoU üretebilir, fakat
+specificity, I-F1, image AUC ve C-F1 hesaplanamaz. Sonuç adı ve rapor tablosu
+`Columbia HiFi fake-only (180)` olmalıdır; makaledeki gerçek+sahte image-level Columbia
+protokolüymüş gibi sunulmamalıdır.
+
+Aşağıdaki varsayılan kök farklıysa yalnız `COLUMBIA_ROOT` satırını değiştirin:
+
+```bash
+cd ~/Desktop/ClassActivationMap
+source .venv/bin/activate
+
+COLUMBIA_ROOT="${COLUMBIA_ROOT:-$HOME/edgecam_data/datasets/Columbia}"
+COLUMBIA_MASK_ROOT="$HOME/edgecam_data/derived_masks/columbia_hifi_fake_png"
+COLUMBIA_META=results/00_metadata/datasets
+MCG_ROOT=~/edgecam_tools/mcg/pre-trained
+MATLAB_BIN=~/edgecam_tools/MATLAB/bin/matlab
+SOP_ROOT=results/06_shared_sop/mcg_reconstructed
+
+test -f "$COLUMBIA_ROOT/vallist.txt"
+test -d "$COLUMBIA_ROOT/4cam_splc"
+test -d "$COLUMBIA_ROOT/mask"
+```
+
+### 13.1 Manifest ve kayıpsız binary PNG maskeler
+
+`vallist.txt` içindeki eski Windows/POSIX mutlak yolların yalnız son dosya adı kullanılır.
+Liste dışında kalan `Thumbs.db` veya başka dosyalar taranmaz. Kaynak JPG maske önce `L` gri
+tona çevrilir; `>=128` pikseller 255, diğerleri 0 olur. Görüntü yeniden boyutlandırılmaz.
+
+```bash
+COLUMBIA_REVISION="vallist_sha256_$(sha256sum "$COLUMBIA_ROOT/vallist.txt" | awk '{print $1}')"
+
+python scripts/prepare_columbia_hifi.py \
+  --dataset-root "$COLUMBIA_ROOT" \
+  --vallist "$COLUMBIA_ROOT/vallist.txt" \
+  --image-dir 4cam_splc \
+  --source-mask-dir mask \
+  --output-mask-root "$COLUMBIA_MASK_ROOT" \
+  --output-manifest manifests/columbia_hifi_fake.csv \
+  --metadata-output "$COLUMBIA_META/columbia_hifi_fake_build.json" \
+  --expected-count 180 \
+  --source-revision "$COLUMBIA_REVISION"
+
+python scripts/audit_manifest.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --image-root "$COLUMBIA_ROOT" \
+  --mask-root "$COLUMBIA_MASK_ROOT" \
+  --verify-hashes \
+  --require-binary-masks \
+  --require-mixed-masks \
+  --expected-rows 180 \
+  --expected-split test \
+  --expected-label 1 \
+  --output "$COLUMBIA_META/columbia_hifi_fake_audit.json"
+```
+
+- Tahmini süre: 30 saniye–2 dakika.
+- Normal ilerleme: komut sonunda `rows=180`, `created_masks + reused_verified_masks=180`.
+- Başarı: audit raporunda `error_count=0`, `mask_count=180`, `binary_mask_count=180`,
+  `mixed_mask_count=180`, split `test:180`, label `1:180`.
+- Kontrol: 5 dakikayı aşarsa veri kökü, ağ diski veya bozuk TIFF/JPG dosyası incelenmelidir.
+
+### 13.2 MCG-reconstructed ortak proposal cache
+
+Bu blok manifest hazırlama/audit başarılı olmadan çalıştırılmaz:
+
+```bash
+python scripts/generate_mcg_proposals.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --image-root "$COLUMBIA_ROOT" \
+  --split test \
+  --output-dir "$SOP_ROOT/columbia_hifi_fake" \
+  --metadata-dir "$SOP_ROOT/metadata/columbia_hifi_fake" \
+  --mcg-root "$MCG_ROOT" \
+  --matlab-bin "$MATLAB_BIN" \
+  --mode accurate --top-k 50 --chunk-size 10
+
+python scripts/generate_mcg_proposals.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --image-root "$COLUMBIA_ROOT" \
+  --split test \
+  --output-dir "$SOP_ROOT/columbia_hifi_fake" \
+  --metadata-dir "$SOP_ROOT/metadata/columbia_hifi_fake" \
+  --mcg-root "$MCG_ROOT" \
+  --matlab-bin "$MATLAB_BIN" \
+  --mode accurate --top-k 50 --verify-only
+
+NPZ_COUNT=$(find "$SOP_ROOT/columbia_hifi_fake" -maxdepth 1 -type f -name '*.npz' | wc -l)
+echo "MCG NPZ count: $NPZ_COUNT"
+test "$NPZ_COUNT" -eq 180
+```
+
+- Tahmini süre: yaklaşık 1–3 saat; gerçek süre görüntü çözünürlüğüne ve MATLAB başlangıç
+  maliyetine bağlıdır.
+- Normal ilerleme: terminalde `MCG_COMPLETED <sample_id> <proposal_count>`; NPZ sayısı her
+  10 görüntülük parça tamamlanınca artar.
+- Ayrı terminalden izleme:
+
+```bash
+watch -n 60 "find '$SOP_ROOT/columbia_hifi_fake' -maxdepth 1 -name '*.npz' | wc -l"
+```
+
+- Başarı: ikinci komut `status=verified, samples=180` yazmalıdır.
+- Kontrol: `MCG_FAILED` görülürse hemen ilgili metadata hata logu incelenir. Terminal 20
+  dakikadan uzun süre sessizse MATLAB işlemi ve disk alanı kontrol edilir; süreç doğrudan
+  silinmez. Aynı üretim komutu güvenli resume için yeniden kullanılabilir.
+
+### 13.3 100-epoch streaming EdgeCAM
+
+CASIAv2 validation'da seçilmiş eşik yalnız pre-SOP yardımcı maskeye aktarılır; SOP scoring ham
+sürekli fused CAM'i kullanır ve Columbia üzerinde eşik seçilmez.
+
+```bash
+VALIDATION_THRESHOLD=0.05  # Daha önce yalnız CASIAv2 validation'da seçilen değer
+
+python scripts/stream_edgecam_fusion.py \
+  --config configs/experiment1_edgecam.toml \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --image-root "$COLUMBIA_ROOT" \
+  --checkpoint-dir results/01_shared_training/checkpoints \
+  --output-dir results/02_edgecam/columbia_hifi_fake \
+  --metadata-output results/00_metadata/edgecam_columbia_hifi_fake.json \
+  --split test --device cuda --batch-size 1 --threshold "$VALIDATION_THRESHOLD"
+```
+
+- Tahmini süre: yaklaşık 1–4 saat; 18.000 batch-1 CAM hesabı yapılır.
+- Normal ilerleme: `.streaming_state/progress.json` içindeki checkpoint ve örnek sayıları artar;
+  GPU kullanımı görülür.
+- İzleme:
+
+```bash
+watch -n 60 cat results/02_edgecam/columbia_hifi_fake/.streaming_state/progress.json
+```
+
+- Başarı: `completed.json` içinde `samples=180`, `total_epochs=100`, son checkpoint
+  `epoch_100.pt` olmalıdır.
+- Kontrol: progress 15 dakikadan uzun süre değişmez ve GPU boşsa terminal hatası, disk alanı ve
+  süreç durumu incelenir. Resume gerekirse aynı komuta yalnız `--resume` eklenir.
+
+### 13.4 SOP scoring, piksel değerlendirme ve görseller
+
+```bash
+python scripts/apply_sop.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --fused-cam-dir results/02_edgecam/columbia_hifi_fake \
+  --proposal-dir "$SOP_ROOT/columbia_hifi_fake" \
+  --proposal-metadata-dir "$SOP_ROOT/metadata/columbia_hifi_fake" \
+  --proposal-format mcg_hwk \
+  --output-dir results/02_edgecam/columbia_hifi_fake_sop \
+  --split test --expected-count 50 --kernel-size 3 --iterations 1
+
+python scripts/evaluate.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --mask-root "$COLUMBIA_MASK_ROOT" \
+  --prediction-dir results/02_edgecam/columbia_hifi_fake_sop \
+  --output-dir results/02_edgecam/columbia_hifi_fake_sop_evaluation \
+  --split test --prediction-suffix __post_sop.npy --pixel-scope fake \
+  --skip-image-metrics
+
+python scripts/visualize_sop_results.py \
+  --manifest manifests/columbia_hifi_fake.csv \
+  --image-root "$COLUMBIA_ROOT" \
+  --mask-root "$COLUMBIA_MASK_ROOT" \
+  --fused-cam-dir results/02_edgecam/columbia_hifi_fake \
+  --prediction-dir results/02_edgecam/columbia_hifi_fake_sop \
+  --output-dir results/02_edgecam/columbia_hifi_fake_sop_visualizations \
+  --split test --sample-count 20
+```
+
+- SOP tahmini süre: yaklaşık 3–20 dakika. Normal ilerleme çıktı dosyası sayısının artmasıdır.
+- SOP başarı: `columbia_hifi_fake_sop/completed.json` içinde `samples=180`.
+- Değerlendirme/görselleştirme: genellikle 1–3 dakika.
+- Başarı: `metrics.json` içinde `pixel_f1` ve `iou` sayısal; `image_f1`, `image_auc` ve
+  `c_f1` bilinçli olarak `null` olmalıdır.
+- Kontrol: SOP 30 dakikayı aşarsa maske çözünürlükleri ve bellek kullanımı incelenmelidir.
+
+Bu akış yalnız yeni Columbia dizinlerine yazar; CASIA sonuçlarını, 100 checkpoint'i, eğitim
+config'ini veya mevcut EdgeCAM matematiğini değiştirmez.

@@ -22,7 +22,8 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--mask-root", type=Path, required=True)
     parser.add_argument("--prediction-dir", type=Path, required=True)
-    parser.add_argument("--image-predictions", type=Path, required=True)
+    parser.add_argument("--image-predictions", type=Path)
+    parser.add_argument("--skip-image-metrics", action="store_true")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split", default="test")
     parser.add_argument("--prediction-suffix", default="__pre_sop.npy")
@@ -30,15 +31,23 @@ def main() -> None:
     args = parser.parse_args()
     rows = [row for row in read_manifest(args.manifest) if row.split == args.split]
     by_id = {row.sample_id: row for row in rows}
-    with args.image_predictions.open("r", newline="", encoding="utf-8") as handle:
-        image_rows = list(csv.DictReader(handle))
-    if {row["sample_id"] for row in image_rows} != set(by_id):
-        raise RuntimeError("Image prediction IDs do not exactly match the selected manifest split")
-    measured_image = image_metrics(
-        [int(row["label"]) for row in image_rows],
-        [int(row["predicted_label"]) for row in image_rows],
-        [float(row["fake_score"]) for row in image_rows],
-    )
+    if not rows:
+        raise RuntimeError(f"No manifest rows for split={args.split}")
+    measured_image = None
+    if not args.skip_image_metrics:
+        if args.image_predictions is None:
+            raise ValueError("--image-predictions is required unless --skip-image-metrics is used")
+        with args.image_predictions.open("r", newline="", encoding="utf-8") as handle:
+            image_rows = list(csv.DictReader(handle))
+        if {row["sample_id"] for row in image_rows} != set(by_id):
+            raise RuntimeError(
+                "Image prediction IDs do not exactly match the selected manifest split"
+            )
+        measured_image = image_metrics(
+            [int(row["label"]) for row in image_rows],
+            [int(row["predicted_label"]) for row in image_rows],
+            [float(row["fake_score"]) for row in image_rows],
+        )
     per_image: list[dict[str, object]] = []
     for row in rows:
         if args.pixel_scope == "fake" and row.label == 0:
@@ -66,17 +75,28 @@ def main() -> None:
     iou = float(np.mean([row["iou"] for row in per_image]))
     report = {
         "metric_protocol": {
-            "image_f1": "harmonic_mean(sensitivity,specificity)",
+            "image_f1": (
+                "not_computed"
+                if measured_image is None
+                else "harmonic_mean(sensitivity,specificity)"
+            ),
             "pixel_aggregation": "macro_per_image",
             "pixel_scope": args.pixel_scope,
             "mask_foreground": "nonzero",
         },
-        "image_f1": measured_image.paper_f1,
-        "image_auc": finite_or_none(measured_image.auc),
-        "positive_class_f1_diagnostic": measured_image.positive_class_f1,
+        "image_f1": measured_image.paper_f1 if measured_image is not None else None,
+        "image_auc": finite_or_none(measured_image.auc) if measured_image is not None else None,
+        "positive_class_f1_diagnostic": (
+            measured_image.positive_class_f1 if measured_image is not None else None
+        ),
         "pixel_f1": pixel_f1,
         "iou": iou,
-        "c_f1": combined_f1(measured_image.paper_f1, pixel_f1),
+        "c_f1": combined_f1(measured_image.paper_f1, pixel_f1) if measured_image else None,
+        "image_metrics_note": (
+            "Skipped explicitly; a fake-only dataset cannot measure specificity, I-F1, or AUC."
+            if measured_image is None
+            else None
+        ),
         "samples": len(per_image),
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
