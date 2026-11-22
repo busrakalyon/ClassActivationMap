@@ -731,13 +731,13 @@ specificity, I-F1, image AUC ve C-F1 hesaplanamaz. Sonuç adı ve rapor tablosu
 `Columbia HiFi fake-only (180)` olmalıdır; makaledeki gerçek+sahte image-level Columbia
 protokolüymüş gibi sunulmamalıdır.
 
-Aşağıdaki varsayılan kök farklıysa yalnız `COLUMBIA_ROOT` satırını değiştirin:
+Aşağıdaki kök, doğrulanmış HiFi-IFDL Columbia dizinidir:
 
 ```bash
 cd ~/Desktop/ClassActivationMap
 source .venv/bin/activate
 
-COLUMBIA_ROOT="${COLUMBIA_ROOT:-$HOME/edgecam_data/datasets/Columbia}"
+COLUMBIA_ROOT="${COLUMBIA_ROOT:-$HOME/edgecam_data/datasets/HiFi_IFDL/data/columbia}"
 COLUMBIA_MASK_ROOT="$HOME/edgecam_data/derived_masks/columbia_hifi_fake_png"
 COLUMBIA_META=results/00_metadata/datasets
 MCG_ROOT=~/edgecam_tools/mcg/pre-trained
